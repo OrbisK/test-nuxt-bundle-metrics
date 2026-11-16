@@ -1,0 +1,61 @@
+name: Bundle size
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: write # push benchmark history to gh-pages (main only)
+  pull-requests: write # comment on PRs when a size regression is detected
+
+concurrency:
+  group: bundle-size-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # TODO: switch to the published version once atinux/nuxt-bundle-analyzer#31 is released
+  BUNDLE_ANALYZER: https://pkg.pr.new/nuxt-bundle-analyzer@31
+
+jobs:
+  bundle-size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Analyze bundle
+        run: npx -y "$BUNDLE_ANALYZER" --name=ci --no-serve
+
+      - name: Write metrics
+        run: >
+          npx -y "$BUNDLE_ANALYZER" metrics
+          --name=ci
+          --reporter=github-action-benchmark
+          --compression=gzip,brotli
+          --output=bundle-size.json
+
+      - name: Store / compare benchmark
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Bundle size
+          tool: customSmallerIsBetter
+          output-file-path: bundle-size.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Only main extends the history on gh-pages; PRs are compared against it.
+          auto-push: ${{ github.event_name == 'push' }}
+          save-data-file: ${{ github.event_name == 'push' }}
+          alert-threshold: '110%'
+          comment-on-alert: ${{ github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
+          fail-on-alert: true
+          summary-always: true
